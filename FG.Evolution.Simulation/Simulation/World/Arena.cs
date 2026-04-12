@@ -17,18 +17,30 @@ namespace FG.Evolution.Simulation.Simulation.World
         public List<Minion> Populacao { get; private set; }
         public int GeracaoAtual { get; private set; }
 
+        // NOVO: Coleção de recursos
+        public List<Comida> Alimentos { get; private set; }
+        private Random sorteador = new Random();
+
+        //// NOVO: A comida agora é um objeto real
+        //public Comida Alimento { get; private set; }
+
         // --- NOVO: AS COORDENADAS DO ALVO ---
-        public int ComidaX { get; private set; }
-        public int ComidaY { get; private set; }
+        //public int Alimento.X { get; private set; }
+        //public int Alimento.Y { get; private set; }
+
 
         // O Construtor agora só pede a maleta de configuração
         public Arena(Configuracao config)
         {
             Config = config;
             GeracaoAtual = 1;
-            // Coloca a comida fixa no canto inferior direito
-            ComidaX = config.LarguraTela - 100;
-            ComidaY = config.AlturaTela - 100;
+            Alimentos = new List<Comida>();
+            EspalharComida(); // O Semeador inicial
+            //// Instancia o objeto Comida
+            //Alimento = new Comida(config.LarguraTela - 100, config.AlturaTela - 100, 15); // Assumindo tamanho 15
+            //// Coloca a comida fixa no canto inferior direito
+            //Alimento.X = config.LarguraTela - 100;
+            //Alimento.Y = config.AlturaTela - 100;
             // --- TENTA LER O ARQUIVO SALVO (Sua persistência continua intacta) ---
             float[] dnaBase = null;
             if (File.Exists("melhor_dna.txt"))
@@ -56,6 +68,25 @@ namespace FG.Evolution.Simulation.Simulation.World
             }
         }
 
+        // NOVO MÉTOD0: Semeia 10 alvos pelo mapa
+        private void EspalharComida()
+        {
+            Alimentos.Clear();
+            int quantidadeAlvos = 10;
+
+            for (int i = 0; i < quantidadeAlvos; i++)
+            {
+                // Garante que a comida nasça dentro dos limites da tela
+                int limiteX = Config.LarguraTela - Config.EspessuraParede - 15;
+                int limiteY = Config.AlturaTela - Config.EspessuraParede - 15;
+
+                float px = sorteador.Next(Config.EspessuraParede, limiteX);
+                float py = sorteador.Next(Config.EspessuraParede, limiteY);
+
+                Alimentos.Add(new Comida(px, py, 15));
+            }
+        }
+
         // O coração da simulação. O Main vai chamar isso 60 vezes por segundo.
         public void AtualizarMundo()
         {
@@ -78,11 +109,17 @@ namespace FG.Evolution.Simulation.Simulation.World
                 minionsVivos++;
                 m.TempoVivo++;
 
-                // 1. Sensores e Decisão (A NOVA ARQUITETURA)
-                // O utilitário Sensor faz a matemática pesada e entrega apenas os dados limpos
-                var leitura = Sensor.LerAmbiente(m, ComidaX, ComidaY);
-                string decisao = m.Pensar(leitura.Distancia, leitura.DiferencaAngulo);
+                // 1. Sensores e Decisão (Foco no alvo mais próximo)
+                Comida alvo = ObterComidaMaisProxima(m);
+                string decisao = "Fugir"; // Ação padrão se não houver comida
 
+                if (alvo != null)
+                {
+                    var leitura = Sensor.LerAmbiente(m, alvo.X, alvo.Y);
+                    decisao = m.Pensar(leitura.Distancia, leitura.DiferencaAngulo);
+                }
+
+                // --- O BLOCO QUE FALTAVA: TRADUZIR PENSAMENTO EM MOVIMENTO ---
                 // 2. Movimento (Física de Tanque)
                 if (decisao == "Frente")
                 {
@@ -100,21 +137,27 @@ namespace FG.Evolution.Simulation.Simulation.World
                     // Vira o volante para a Direita
                     m.Angulo += velocidadeRotacao;
                 }
-                // Se a decisão for "Fugir", ele simplesmente não entra em nenhum if e fica parado freando.
+
+                // ... (código de movimento Frente/Girar continua igual)
 
                 // 3. Checagem de Morte (Parede)
                 bool bateuNaParede = m.X <= limiteEsquerdo || m.X >= limiteDireito || m.Y <= limiteSuperior || m.Y >= limiteInferior;
-
-                // 3.1 Checagem de Sucesso (Comida)
-                bool achouComida = m.X < ComidaX + Config.TamanhoMinion &&
-                                   m.X + Config.TamanhoMinion > ComidaX &&
-                                   m.Y < ComidaY + Config.TamanhoMinion &&
-                                   m.Y + Config.TamanhoMinion > ComidaY;
-
-                // 3.2 Checagem de Velhice
                 bool morreuDeVelho = m.TempoVivo >= Config.TempoMaximoGeracao;
 
-                // Se bateu na parede, ficou velho, OU ACHOU A COMIDA, o motor desliga!
+                // 3.1 Checagem de Sucesso e Consumo Real
+                bool achouComida = false;
+                for (int i = Alimentos.Count - 1; i >= 0; i--)
+                {
+                    var c = Alimentos[i];
+                    if (m.X < c.X + Config.TamanhoMinion && m.X + Config.TamanhoMinion > c.X &&
+                        m.Y < c.Y + Config.TamanhoMinion && m.Y + Config.TamanhoMinion > c.Y)
+                    {
+                        achouComida = true;
+                        Alimentos.RemoveAt(i); // A comida é devorada e some do mapa
+                        break;
+                    }
+                }
+
                 if (bateuNaParede || morreuDeVelho || achouComida)
                 {
                     m.Vivo = false;
@@ -161,9 +204,11 @@ namespace FG.Evolution.Simulation.Simulation.World
         }
         private float CalcularDistanciaAteComida(Minion m)
         {
-            // Matemática básica de distância entre dois pontos (Pitágoras)
-            float dX = m.X - ComidaX;
-            float dY = m.Y - ComidaY;
+            Comida alvo = ObterComidaMaisProxima(m);
+            if (alvo == null) return 0; // Se comeram tudo, distância é 0 (sucesso absoluto)
+
+            float dX = m.X - alvo.X;
+            float dY = m.Y - alvo.Y;
             return (float)Math.Sqrt(dX * dX + dY * dY);
         }
 
@@ -172,29 +217,35 @@ namespace FG.Evolution.Simulation.Simulation.World
         {
             List<SnapshotVisual> cena = new List<SnapshotVisual>();
 
-            // 1. Fotografa a Comida
-            // Como a Comida ainda não é uma classe herdada, montamos o pacote dela manualmente aqui
-            cena.Add(new SnapshotVisual
+            // 1. Fotografa todas as Comidas no mapa
+            foreach (var comida in Alimentos)
             {
-                X = this.ComidaX,
-                Y = this.ComidaY,
-                Tamanho = 15, // Ajuste para o seu Config.TamanhoMinion
-                CorBase = Color.Blue,
-                CorBorda = default, // Sem borda
-                Formato = FormatoVisual.Quadrado
-            });
+                cena.Add(comida.GerarSnapshot());
+            }
 
             // 2. Fotografa a População
             foreach (var minion in Populacao)
             {
                 if (minion.Vivo)
                 {
-                    // Como o Minion agora herda do Chassi, ele já sabe se empacotar sozinho!
                     cena.Add(minion.GerarSnapshot());
                 }
             }
 
             return cena;
+        }
+
+        // NOVO MÉTODO: Descobre qual é a comida mais próxima do minion
+        private Comida ObterComidaMaisProxima(Minion m)
+        {
+            if (Alimentos.Count == 0) return null;
+
+            return Alimentos.OrderBy(c =>
+            {
+                float dX = m.X - c.X;
+                float dY = m.Y - c.Y;
+                return Math.Sqrt(dX * dX + dY * dY);
+            }).First();
         }
     }
 }
