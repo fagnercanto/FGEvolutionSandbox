@@ -2,12 +2,39 @@
 
 <PropertyGroup>
   <OutputType>Exe</OutputType>
-  <TargetFramework>net8.0</TargetFramework> <!-- Sua versão pode ser diferente -->
+  <TargetFramework>net8.0-windows</TargetFramework> <!-- -windows necessário para o Painel de Controle (WinForms) -->
   <ImplicitUsings>enable</ImplicitUsings>
   <Nullable>disable</Nullable> <!-- A TRAVA FOI DESLIGADA AQUI -->
+  <UseWindowsForms>true</UseWindowsForms>
 </PropertyGroup>
 
   <ItemGroup>
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Sempre copia o config.json da raiz do projeto para a pasta de sa\u00edda a cada build,
+         evitando que um config.json desatualizado fique preso em bin/Debug/... -->
+    <None Include="config.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Copia os sprites (PNG) e o README de conven\u00E7\u00E3o para a pasta de sa\u00edda,
+         mantendo a estrutura Assets/Sprites/ usada pelo GerenciadorTexturas. -->
+    <None Include="Assets\Sprites\**\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Assets\Sprites\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.11">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.11" />
     <PackageReference Include="Raylib-cs" Version="7.0.2" />
   </ItemGroup>
 

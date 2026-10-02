@@ -18,9 +18,13 @@ namespace FG.Evolution.Simulation.Engine.Core
         public Color CorBorda { get; set; }
         public FormatoVisual Formato { get; set; }
 
+        // Identificador do sprite (nome de arquivo sem extensão) usado pelo MotorGrafico
+        // para tentar carregar Assets/Sprites/{IdSprite}.png. Null = sem sprite (usa fallback vetorial).
+        public string IdSprite { get; set; }
+
         // O Empacotador (A ponte para a Engine Gráfica)
         // Qualquer objeto no jogo agora sabe gerar o seu próprio Snapshot!
-        public SnapshotVisual GerarSnapshot()
+        public virtual SnapshotVisual GerarSnapshot()
         {
             return new SnapshotVisual
             {
@@ -30,7 +34,9 @@ namespace FG.Evolution.Simulation.Engine.Core
                 Angulo = Angulo,
                 CorBase = CorBase,
                 CorBorda = CorBorda,
-                Formato = Formato
+                Formato = Formato,
+                NivelHp = null,
+                IdSprite = IdSprite
             };
         }
     }

@@ -1,11 +1,11 @@
 ﻿using FG.Evolution.Simulation.Config;
 using FG.Evolution.Simulation.Engine.Graphics;
+using FG.Evolution.Simulation.Persistence;
 using FG.Evolution.Simulation.Simulation.World;
-
-// Adicione aqui os usings corretos para a sua Arena e Configuração de acordo com as pastas
-// Exemplo: using FG.Evolution.Simulation.Simulation.World;
-// Exemplo: using FG.Evolution.Simulation.Config;
 using Raylib_cs;
+using System.Linq;
+using System.Threading;
+using System.Windows.Forms;
 
 namespace FG.Evolution.Simulation
 {
@@ -13,33 +13,126 @@ namespace FG.Evolution.Simulation
     {
         static void Main(string[] args)
         {
-            // 1. Inicialização do Sistema Operacional (Janela)
-            // Se você usa uma classe Config estática, ajuste os nomes aqui se necessário.
-            Raylib.InitWindow(800, 600, "FG Sandbox Engine - V1");
-            Raylib.SetTargetFPS(60);
+            // Seleção de modo via argumento de linha de comando:
+            //   (sem argumentos)      -> Modo Gráfico (visualização, Raylib)
+            //   headless [geracoes]   -> Modo Headless (calibração, sem renderização)
+            string modo = args.Length > 0 ? args[0].ToLowerInvariant() : "grafico";
 
-            // 2. Instanciação das Configurações e Motores
-            Configuracao maletaConfig = new Configuracao(); // Cria as regras do jogo
-
-            // Injeta a maleta na Arena (Resolve o erro do sublinhado vermelho!)
-            Arena arena = new Arena(maletaConfig);
-            MotorGrafico motor = new MotorGrafico();
-
-            // 3. O Game Loop (Onde o tempo acontece)
-            while (!Raylib.WindowShouldClose())
+            if (modo == "headless")
             {
-                // FASE A: O Mundo Pensa e se Move (Zero Gráficos)
-                arena.AtualizarMundo();
+                int quantidadeGeracoes = 100;
+                if (args.Length > 1 && int.TryParse(args[1], out int valorInformado))
+                {
+                    quantidadeGeracoes = valorInformado;
+                }
 
-                // FASE B: A Fotografia do Estado Atual (O Transporte)
-                var cenaVisual = arena.ObterCenaVisual();
-
-                // FASE C: O Pintor Cego Trabalha (Zero Lógica)
-                motor.RenderizarCena(cenaVisual, arena.GeracaoAtual);
+                Calibrador_Geracao_Headless.Executar(quantidadeGeracoes);
+                return;
             }
 
-            // 4. Desligamento Limpo
+            RodarModoGrafico();
+        }
+
+        // Modo Gráfico / Modo Visualização: renderiza a simulação em tempo real via Raylib.
+        // A população inicial é carregada automaticamente a partir do Top 5 de cada espécie
+        // salvo no banco (Repositorio_Genoma), permitindo observar o comportamento dos
+        // melhores genomas já evoluídos. Em paralelo, uma segunda janela (WinForms) permite
+        // editar parâmetros da simulação em tempo real e acompanha geração/legenda/contagens.
+        private static void RodarModoGrafico()
+        {
+            Configuracao maletaConfig = Configuracao.Carregar();
+            Repositorio_Genoma repositorio = new Repositorio_Genoma();
+            repositorio.GarantirBancoCriado();
+
+            // Fila simples (com lock) para receber pedidos de atualização vindos da thread do WinForms.
+            ParametrosArena pedidoAtualizacao = null;
+            object trava = new object();
+
+            PainelControle painel = null;
+            var threadPainel = new Thread(() =>
+            {
+                painel = new PainelControle(
+                    maletaConfig.LarguraTela,
+                    maletaConfig.AlturaTela,
+                    maletaConfig.PopulacaoTijolos,
+                    maletaConfig.PopulacaoPlantas,
+                    maletaConfig.PopulacaoPredadores,
+                    maletaConfig.PopulacaoPresas,
+                    maletaConfig.TamanhoElite,
+                    maletaConfig.FPS,
+                    maletaConfig.TempoMaximoGeracao);
+
+                painel.AtualizarSolicitado += novosParametros =>
+                {
+                    lock (trava)
+                    {
+                        pedidoAtualizacao = novosParametros;
+                    }
+                };
+
+                painel.VerTabelaSolicitado += () =>
+                {
+                    var janelaTabela = new JanelaTabela(repositorio);
+                    janelaTabela.Show();
+                };
+
+                Application.EnableVisualStyles();
+                Application.Run(painel);
+            });
+            threadPainel.SetApartmentState(ApartmentState.STA);
+            threadPainel.IsBackground = true;
+            threadPainel.Start();
+
+            Raylib.InitWindow(maletaConfig.LarguraTela, maletaConfig.AlturaTela, "FG Sandbox Engine - Predador vs Presa");
+            Raylib.SetTargetFPS(maletaConfig.FPS);
+
+            Arena arena = new Arena(maletaConfig, repositorio);
+            MotorGrafico motor = new MotorGrafico();
+
+            while (!Raylib.WindowShouldClose())
+            {
+                ParametrosArena parametrosRecebidos = null;
+                lock (trava)
+                {
+                    if (pedidoAtualizacao != null)
+                    {
+                        parametrosRecebidos = pedidoAtualizacao;
+                        pedidoAtualizacao = null;
+                    }
+                }
+
+                if (parametrosRecebidos != null)
+                {
+                    maletaConfig.LarguraTela = parametrosRecebidos.LarguraTela;
+                    maletaConfig.AlturaTela = parametrosRecebidos.AlturaTela;
+                    maletaConfig.PopulacaoTijolos = parametrosRecebidos.PopulacaoTijolos;
+                    maletaConfig.PopulacaoPlantas = parametrosRecebidos.PopulacaoPlantas;
+                    maletaConfig.PopulacaoPredadores = parametrosRecebidos.PopulacaoPredadores;
+                    maletaConfig.PopulacaoPresas = parametrosRecebidos.PopulacaoPresas;
+                    maletaConfig.FPS = parametrosRecebidos.FPS;
+
+                    Raylib.SetWindowSize(maletaConfig.LarguraTela, maletaConfig.AlturaTela);
+                    Raylib.SetTargetFPS(maletaConfig.FPS);
+                    arena = new Arena(maletaConfig, repositorio);
+                }
+
+                arena.AtualizarMundo();
+                var cenaVisual = arena.ObterCenaVisual();
+                motor.RenderizarCena(cenaVisual);
+
+                int totalPresas = arena.Presas.Count(p => p.Vivo);
+                int totalPredadores = arena.Predadores.Count(p => p.Vivo);
+                painel?.AtualizarStatus(arena.GeracaoAtual, totalPresas, totalPredadores);
+            }
+
+            GerenciadorTexturas.DescarregarTudo();
             Raylib.CloseWindow();
+
+            if (painel != null)
+            {
+                painel.BeginInvoke(new System.Action(() => painel.Close()));
+            }
         }
     }
 }
+
